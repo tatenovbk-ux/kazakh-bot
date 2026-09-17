@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kazakh Bot — админка</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <style>body { font-family: 'Segoe UI', system-ui, sans-serif; }</style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="adminApp()" x-init="init()">
+
+  <!-- token gate -->
+  <template x-if="!token">
+    <div class="max-w-sm mx-auto mt-24 bg-white p-6 rounded-xl shadow">
+      <h1 class="text-lg font-bold mb-4">Админ-токен</h1>
+      <input x-model="tokenInput" type="password" placeholder="ADMIN_TOKEN из .env"
+        class="w-full border rounded px-3 py-2 mb-3" @keyup.enter="saveToken()" />
+      <button @click="saveToken()" class="bg-violet-600 text-white rounded px-4 py-2 w-full">Войти</button>
+    </div>
+  </template>
+
+  <template x-if="token">
+    <div class="max-w-5xl mx-auto py-8 px-4">
+      <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-violet-700">Kazakh Bot — админка</h1>
+        <button @click="logout()" class="text-sm text-gray-400 underline">сменить токен</button>
+      </div>
+
+      <div class="flex gap-2 mb-6">
+        <button @click="tab='content'" :class="tab==='content' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600'" class="px-4 py-2 rounded-lg shadow-sm">Контент</button>
+        <button @click="tab='children'; loadChildren()" :class="tab==='children' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600'" class="px-4 py-2 rounded-lg shadow-sm">Дети</button>
+        <button @click="tab='words'; loadWords()" :class="tab==='words' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600'" class="px-4 py-2 rounded-lg shadow-sm">Слова</button>
+        <button @click="tab='reports'; loadChildren()" :class="tab==='reports' ? 'bg-violet-600 text-white' : 'bg-white text-gray-600'" class="px-4 py-2 rounded-lg shadow-sm">Отчёты</button>
+      </div>
+
+      <!-- CONTENT TAB -->
+      <template x-if="tab === 'content'">
+        <div class="grid grid-cols-3 gap-6">
+          <div class="col-span-1 space-y-4">
+            <div class="bg-white rounded-xl shadow p-4">
+              <h2 class="font-semibold mb-2">Загрузить от репетитора</h2>
+              <textarea x-model="pasteText" rows="6" placeholder="Вставь текст со словами..."
+                class="w-full border rounded px-3 py-2 text-sm mb-2"></textarea>
+              <button @click="uploadText()" :disabled="!pasteText || uploading"
+                class="bg-violet-600 disabled:opacity-40 text-white rounded px-4 py-2 w-full mb-2">
+                <span x-show="!uploading">Отправить текст</span>
+                <span x-show="uploading">Обрабатываю через Claude…</span>
+              </button>
+              <div class="text-center text-gray-400 text-xs my-1">или</div>
+              <input type="file" @change="uploadFile($event)" accept=".pdf,.docx,.txt" class="w-full text-sm" />
+            </div>
+
+            <div class="bg-white rounded-xl shadow p-4">
+              <h2 class="font-semibold mb-2">Порции</h2>
+              <div class="space-y-1 max-h-96 overflow-y-auto">
+                <template x-for="b in batches" :key="b.id">
+                  <button @click="openBatch(b.id)"
+                    class="w-full text-left px-3 py-2 rounded hover:bg-violet-50 flex justify-between items-center text-sm"
+                    :class="selectedBatchId === b.id ? 'bg-violet-100' : ''">
+                    <span x-text="b.source_filename || ('Текст #' + b.id)"></span>
+                    <span class="text-xs px-2 py-0.5 rounded-full"
+                      :class="statusColor(b.status)" x-text="b.status"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-span-2">
+            <template x-if="!selectedBatch">
+              <div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">Выбери порцию слева</div>
+            </template>
+
+            <template x-if="selectedBatch">
+              <div class="bg-white rounded-xl shadow p-4">
+                <div class="flex justify-between items-center mb-4">
+                  <h2 class="font-semibold">Порция #<span x-text="selectedBatch.id"></span>
+                    <span class="text-xs px-2 py-0.5 rounded-full ml-2" :class="statusColor(selectedBatch.status)" x-text="selectedBatch.status"></span>
+                  </h2>
+                  <button x-show="selectedBatch.status === 'ready_for_review'" @click="approveAll()"
+                    class="bg-green-600 text-white rounded px-4 py-2 text-sm">Утвердить всё ✓</button>
+                </div>
+
+                <template x-if="selectedBatch.error_message">
+                  <p class="text-red-500 text-sm mb-3" x-text="selectedBatch.error_message"></p>
+                </template>
+
+                <h3 class="font-medium text-sm text-gray-500 mb-2">Слова (<span x-text="selectedBatch.words.length"></span>)</h3>
+                <div class="space-y-2 mb-6">
+                  <template x-for="w in selectedBatch.words" :key="w.id">
+                    <div class="flex gap-2 items-center border rounded px-2 py-1">
+                      <input x-model="w.kazakh" @blur="saveWord(w)" class="border rounded px-2 py-1 text-sm flex-1" />
+                      <input x-model="w.russian" @blur="saveWord(w)" class="border rounded px-2 py-1 text-sm flex-1" />
+                      <span class="text-xs px-2 py-0.5 rounded-full" :class="statusColor(w.status)" x-text="w.status"></span>
+                    </div>
+                  </template>
+                </div>
+
+                <h3 class="font-medium text-sm text-gray-500 mb-2">Задания (<span x-text="selectedBatch.tasks.length"></span>)</h3>
+                <div class="space-y-2">
+                  <template x-for="t in selectedBatch.tasks" :key="t.id">
+                    <div class="border rounded px-3 py-2 text-sm">
+                      <div class="flex justify-between mb-1">
+                        <span class="font-mono text-xs text-violet-600" x-text="t.type"></span>
+                        <span class="text-xs px-2 py-0.5 rounded-full" :class="statusColor(t.status)" x-text="t.status"></span>
+                      </div>
+                      <pre class="text-xs text-gray-600 whitespace-pre-wrap" x-text="JSON.stringify(t.content, null, 0)"></pre>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- CHILDREN TAB -->
+      <template x-if="tab === 'children'">
+        <div class="grid grid-cols-2 gap-6">
+          <div class="bg-white rounded-xl shadow p-4">
+            <h2 class="font-semibold mb-3">Добавить ребёнка</h2>
+            <input x-model="newChild.name" placeholder="Имя" class="w-full border rounded px-3 py-2 mb-2" />
+            <input x-model="newChild.pin" placeholder="4-значный PIN" maxlength="4" class="w-full border rounded px-3 py-2 mb-3" />
+            <button @click="createChild()" class="bg-violet-600 text-white rounded px-4 py-2 w-full">Создать</button>
+          </div>
+          <div class="bg-white rounded-xl shadow p-4">
+            <h2 class="font-semibold mb-3">Дети</h2>
+            <template x-for="c in children" :key="c.id">
+              <div class="flex justify-between border-b py-2 text-sm">
+                <span x-text="c.name"></span>
+                <span class="text-gray-400">💎 <span x-text="c.total_points"></span></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- WORDS TAB -->
+      <template x-if="tab === 'words'">
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex justify-between items-center mb-3 gap-3">
+            <h2 class="font-semibold whitespace-nowrap">Слова <span class="text-gray-400 text-sm" x-text="'(' + words.length + ')'"></span></h2>
+            <input x-model="wordFilter" placeholder="Поиск..." class="border rounded px-3 py-1.5 text-sm w-48" />
+          </div>
+          <p class="text-xs text-gray-400 mb-3">
+            Отметь ⭐ слова, которые дочка часто путает или которые важны репетитору — они будут чаще попадаться в заданиях.
+          </p>
+          <div class="divide-y max-h-[32rem] overflow-y-auto">
+            <template x-for="w in filteredWords" :key="w.id">
+              <div class="flex justify-between items-center py-2">
+                <div class="text-sm">
+                  <span class="font-semibold" x-text="w.kazakh"></span>
+                  <span class="text-gray-400"> — </span>
+                  <span x-text="w.russian"></span>
+                </div>
+                <button @click="toggleWordPriority(w)"
+                  class="text-xl px-2 active:scale-90 transition"
+                  :class="w.is_priority ? 'text-yellow-400' : 'text-gray-300'"
+                  :title="w.is_priority ? 'В приоритете — нажми, чтобы убрать' : 'Отметить в приоритет'">
+                  <span x-text="w.is_priority ? '⭐' : '☆'"></span>
+                </button>
+              </div>
+            </template>
+            <template x-if="!filteredWords.length">
+              <div class="text-center text-gray-400 py-8 text-sm">Ничего не найдено</div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- REPORTS TAB -->
+      <template x-if="tab === 'reports'">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="bg-white rounded-xl shadow p-4 lg:col-span-1 lg:order-2">
+            <h2 class="font-semibold mb-2">Ребёнок</h2>
+            <template x-for="c in children" :key="c.id">
+              <button @click="loadDashboard(c.id)"
+                class="w-full text-left px-3 py-2 rounded hover:bg-violet-50 text-sm"
+                :class="selectedChildId === c.id ? 'bg-violet-100' : ''" x-text="c.name"></button>
+            </template>
+          </div>
+
+          <div class="lg:col-span-2 lg:order-1 space-y-4">
+            <template x-if="!selectedChildId">
+              <div class="bg-white rounded-xl shadow p-8 text-center text-gray-400">Выбери ребёнка справа</div>
+            </template>
+
+            <template x-if="selectedChildId && dashboard">
+              <div class="space-y-4">
+                <div class="bg-violet-600 text-white rounded-xl shadow p-4">
+                  <p class="text-sm leading-relaxed" x-text="dashboard.summary_text"></p>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3">
+                  <div class="bg-white rounded-xl shadow p-3 text-center">
+                    <div class="text-2xl">📖</div>
+                    <div class="font-bold text-lg" x-text="dashboard.vocabulary.mastered"></div>
+                    <div class="text-xs text-gray-400">в активе</div>
+                    <div class="text-xs text-gray-300" x-text="dashboard.vocabulary.learning + ' повтор.'"></div>
+                  </div>
+                  <div class="bg-white rounded-xl shadow p-3 text-center">
+                    <div class="text-2xl">🔥</div>
+                    <div class="font-bold text-lg" x-text="dashboard.activity.current_streak_days"></div>
+                    <div class="text-xs text-gray-400">дней подряд</div>
+                    <div class="text-xs text-gray-300" x-text="'лучший: ' + dashboard.activity.best_streak_days"></div>
+                  </div>
+                  <div class="bg-white rounded-xl shadow p-3 text-center">
+                    <div class="text-2xl">⏱</div>
+                    <div class="font-bold text-lg" x-text="dashboard.activity.avg_session_minutes + ' мин'"></div>
+                    <div class="text-xs text-gray-400">средняя сессия</div>
+                  </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow p-4">
+                  <h3 class="font-semibold text-sm text-gray-500 mb-3">Активность за 14 дней</h3>
+                  <div class="flex items-end gap-1 h-24">
+                    <template x-for="d in dashboard.activity.daily" :key="d.date">
+                      <div class="flex-1 h-full flex flex-col items-stretch justify-end" :title="d.date + ': ' + d.tasks_completed + ' заданий'">
+                        <div class="w-full rounded-t"
+                          :class="d.tasks_completed ? 'bg-violet-500' : 'bg-gray-100'"
+                          :style="`height: ${d.tasks_completed ? Math.min(100, 15 + d.tasks_completed * 6) : 4}%`"></div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <template x-if="dashboard.weak_words.length">
+                  <div class="bg-white rounded-xl shadow p-4">
+                    <h3 class="font-semibold text-sm text-gray-500 mb-3">Слова, которые даются сложнее</h3>
+                    <div class="space-y-1">
+                      <template x-for="w in dashboard.weak_words" :key="w.kazakh">
+                        <div class="flex justify-between items-center text-sm border-b last:border-0 py-1.5">
+                          <span><span class="font-semibold" x-text="w.kazakh"></span> — <span class="text-gray-400" x-text="w.russian"></span></span>
+                          <span class="text-xs px-2 py-0.5 rounded-full whitespace-nowrap"
+                            :class="w.accuracy_pct < 40 ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-700'"
+                            x-text="w.accuracy_pct + '% (' + w.attempts + ')'"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+
+                <template x-if="dashboard.letter_confusions.length || dashboard.grammar_case_errors.length">
+                  <div class="bg-white rounded-xl shadow p-4 space-y-3">
+                    <template x-if="dashboard.letter_confusions.length">
+                      <div>
+                        <h3 class="font-semibold text-sm text-gray-500 mb-2">Буквы, которые путаются</h3>
+                        <div class="flex flex-wrap gap-2">
+                          <template x-for="c in dashboard.letter_confusions" :key="c.letter">
+                            <span class="bg-rose-50 text-rose-600 text-sm font-semibold px-3 py-1 rounded-full" x-text="c.letter + ' ×' + c.count"></span>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                    <template x-if="dashboard.grammar_case_errors.length">
+                      <div>
+                        <h3 class="font-semibold text-sm text-gray-500 mb-2">Падежи, которые путаются</h3>
+                        <div class="flex flex-wrap gap-2">
+                          <template x-for="g in dashboard.grammar_case_errors" :key="g.case">
+                            <span class="bg-amber-50 text-amber-700 text-sm font-semibold px-3 py-1 rounded-full" x-text="g.case + ' ×' + g.count"></span>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <div class="bg-white rounded-xl shadow p-4">
+              <h2 class="font-semibold mb-3">Последние занятия</h2>
+              <table class="w-full text-sm">
+                <thead><tr class="text-left text-gray-400"><th>Дата</th><th>Заданий</th><th>Кристаллов</th></tr></thead>
+                <tbody>
+                  <template x-for="s in sessions" :key="s.id">
+                    <tr class="border-t">
+                      <td x-text="new Date(s.started_at).toLocaleString('ru-RU')"></td>
+                      <td x-text="s.tasks_completed"></td>
+                      <td x-text="'💎 ' + s.points_earned"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </template>
+
+    </div>
+  </template>
+
+  <script>
+    function adminApp() {
+      return {
+        token: localStorage.getItem('admin_token') || '',
+        tokenInput: '',
+        tab: 'content',
+        pasteText: '',
+        uploading: false,
+        batches: [],
+        selectedBatchId: null,
+        selectedBatch: null,
+        children: [],
+        newChild: { name: '', pin: '' },
+        selectedChildId: null,
+        sessions: [],
+        dashboard: null,
+        words: [],
+        wordFilter: '',
+
+        init() {
+          if (this.token) this.loadBatches();
+        },
+
+        saveToken() {
+          this.token = this.tokenInput.trim();
+          localStorage.setItem('admin_token', this.token);
+          this.loadBatches();
+        },
+        logout() {
+          this.token = '';
+          localStorage.removeItem('admin_token');
+        },
+
+        headers() {
+          return { 'X-Admin-Token': this.token };
+        },
+        jsonHeaders() {
+          return { 'X-Admin-Token': this.token, 'Content-Type': 'application/json' };
+        },
+
+        statusColor(status) {
+          const map = {
+            draft: 'bg-yellow-100 text-yellow-700',
+            approved: 'bg-green-100 text-green-700',
+            rejected: 'bg-red-100 text-red-700',
+            pending: 'bg-gray-100 text-gray-500',
+            processing: 'bg-blue-100 text-blue-700',
+            ready_for_review: 'bg-yellow-100 text-yellow-700',
+            failed: 'bg-red-100 text-red-700',
+            done: 'bg-green-100 text-green-700',
+          };
+          return map[status] || 'bg-gray-100 text-gray-500';
+        },
+
+        get filteredWords() {
+          const q = this.wordFilter.trim().toLowerCase();
+          if (!q) return this.words;
+          return this.words.filter(w => w.kazakh.toLowerCase().includes(q) || w.russian.toLowerCase().includes(q));
+        },
+
+        async loadWords() {
+          const res = await fetch('/api/admin/words', { headers: this.headers() });
+          this.words = await res.json();
+        },
+
+        async toggleWordPriority(w) {
+          const newValue = !w.is_priority;
+          w.is_priority = newValue;
+          const res = await fetch(`/api/admin/words/${w.id}`, {
+            method: 'PATCH',
+            headers: this.jsonHeaders(),
+            body: JSON.stringify({ is_priority: newValue }),
+          });
+          if (!res.ok) {
+            w.is_priority = !newValue;
+          }
+        },
+
+        async loadBatches() {
+          const res = await fetch('/api/admin/batches', { headers: this.headers() });
+          this.batches = await res.json();
+        },
+
+        async uploadText() {
+          this.uploading = true;
+          try {
+            const res = await fetch('/api/admin/batches/text', {
+              method: 'POST',
+              headers: this.jsonHeaders(),
+              body: JSON.stringify({ raw_text: this.pasteText }),
+            });
+            const data = await res.json();
+            this.pasteText = '';
+            await this.loadBatches();
+            this.openBatch(data.id);
+          } finally {
+            this.uploading = false;
+          }
+        },
+
+        async uploadFile(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+          this.uploading = true;
+          try {
+            const form = new FormData();
+            form.append('file', file);
+            const res = await fetch('/api/admin/batches/upload', {
+              method: 'POST',
+              headers: this.headers(),
+              body: form,
+            });
+            const data = await res.json();
+            await this.loadBatches();
+            this.openBatch(data.id);
+          } finally {
+            this.uploading = false;
+          }
+        },
+
+        async openBatch(id) {
+          this.selectedBatchId = id;
+          const res = await fetch(`/api/admin/batches/${id}`, { headers: this.headers() });
+          this.selectedBatch = await res.json();
+        },
+
+        async saveWord(w) {
+          await fetch(`/api/admin/words/${w.id}`, {
+            method: 'PATCH',
+            headers: this.jsonHeaders(),
+            body: JSON.stringify({ kazakh: w.kazakh, russian: w.russian }),
+          });
+        },
+
+        async approveAll() {
+          await fetch(`/api/admin/batches/${this.selectedBatchId}/approve-all`, {
+            method: 'POST',
+            headers: this.headers(),
+          });
+          await this.loadBatches();
+          await this.openBatch(this.selectedBatchId);
+        },
+
+        async loadChildren() {
+          const res = await fetch('/api/admin/children', { headers: this.headers() });
+          this.children = await res.json();
+        },
+
+        async createChild() {
+          const res = await fetch('/api/admin/children', {
+            method: 'POST',
+            headers: this.jsonHeaders(),
+            body: JSON.stringify(this.newChild),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert('Не удалось создать ребёнка: ' + (err.detail || res.status));
+            return;
+          }
+          this.newChild = { name: '', pin: '' };
+          await this.loadChildren();
+        },
+
+        async loadSessions(childId) {
+          this.selectedChildId = childId;
+          const res = await fetch(`/api/admin/reports/sessions?child_id=${childId}`, { headers: this.headers() });
+          this.sessions = await res.json();
+        },
+
+        async loadDashboard(childId) {
+          this.dashboard = null;
+          await Promise.all([
+            this.loadSessions(childId),
+            fetch(`/api/admin/reports/dashboard?child_id=${childId}`, { headers: this.headers() })
+              .then(res => res.json())
+              .then(data => { this.dashboard = data; }),
+          ]);
+        },
+      };
+    }
+  </script>
+</body>
+</html>

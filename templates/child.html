@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Тіл үйрен</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#7c3aed" />
+
+  <!-- iOS: Safari does not read manifest.json for home-screen install, so these are required -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Тіл үйрен" />
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+
+  <!-- Android/Chrome also honors a direct icon link as a fallback -->
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+    .flip-card { perspective: 1000px; }
+    .flip-inner { transition: transform 0.5s; transform-style: preserve-3d; }
+    .flipped .flip-inner { transform: rotateY(180deg); }
+    .flip-face { backface-visibility: hidden; }
+    .flip-back { transform: rotateY(180deg); }
+    @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.15); } 100% { transform: scale(1); } }
+    .pop { animation: pop 0.3s ease; }
+  </style>
+</head>
+<body class="bg-gradient-to-b from-violet-100 to-white min-h-screen" x-data="childApp()" x-init="init()">
+
+  <div class="max-w-md mx-auto min-h-screen flex flex-col px-4 py-6">
+
+    <!-- LOGIN: choose child -->
+    <template x-if="screen === 'select'">
+      <div class="flex flex-col items-center justify-center flex-1 gap-6">
+        <h1 class="text-2xl font-bold text-violet-700">Кім ойнайды?</h1>
+        <div class="grid grid-cols-2 gap-4 w-full">
+          <template x-for="c in children" :key="c.id">
+            <button @click="selectChild(c)"
+              class="bg-white rounded-3xl shadow-md p-6 flex flex-col items-center gap-2 active:scale-95 transition">
+              <div class="w-16 h-16 rounded-full bg-violet-200 flex items-center justify-center text-3xl" x-text="c.name[0]"></div>
+              <span class="font-semibold text-gray-700" x-text="c.name"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- PIN pad -->
+    <template x-if="screen === 'pin'">
+      <div class="flex flex-col items-center justify-center flex-1 gap-8">
+        <div>
+          <h2 class="text-xl font-semibold text-center text-gray-700">Привет, <span x-text="selected?.name"></span>!</h2>
+          <p class="text-center text-gray-400 text-sm">Введи свой код</p>
+        </div>
+        <div class="flex gap-3">
+          <template x-for="i in 4">
+            <div class="w-4 h-4 rounded-full border-2 border-violet-400"
+                 :class="pin.length >= i ? 'bg-violet-500' : 'bg-transparent'"></div>
+          </template>
+        </div>
+        <p x-show="pinError" class="text-red-500 text-sm" x-text="pinError"></p>
+        <div class="grid grid-cols-3 gap-4">
+          <template x-for="d in [1,2,3,4,5,6,7,8,9]">
+            <button @click="pressDigit(d)" class="w-16 h-16 rounded-full bg-white shadow text-2xl font-semibold text-violet-700 active:scale-90 transition" x-text="d"></button>
+          </template>
+          <div></div>
+          <button @click="pressDigit(0)" class="w-16 h-16 rounded-full bg-white shadow text-2xl font-semibold text-violet-700 active:scale-90 transition">0</button>
+          <button @click="backspace()" class="w-16 h-16 rounded-full bg-white shadow text-xl text-gray-400 active:scale-90 transition">⌫</button>
+        </div>
+        <button @click="screen = 'select'; pin = ''" class="text-gray-400 text-sm underline">Назад</button>
+      </div>
+    </template>
+
+    <!-- HOME -->
+    <template x-if="screen === 'home'">
+      <div class="flex flex-col items-center justify-center flex-1 gap-6 text-center">
+        <h1 class="text-2xl font-bold text-violet-700">Сәлем, <span x-text="home?.name"></span>! 👋</h1>
+        <div class="bg-white rounded-3xl shadow-md p-6 w-full flex justify-around">
+          <div>
+            <div class="text-3xl">💎</div>
+            <div class="font-bold text-lg" x-text="home?.total_points ?? 0"></div>
+            <div class="text-xs text-gray-400">кристалл</div>
+          </div>
+          <div>
+            <div class="text-3xl">📚</div>
+            <div class="font-bold text-lg" x-text="(home?.completed_today ?? 0)"></div>
+            <div class="text-xs text-gray-400">сделано сегодня</div>
+          </div>
+        </div>
+
+        <button @click="startSession()"
+          class="bg-violet-600 text-white text-xl font-bold rounded-full px-10 py-4 shadow-lg active:scale-95 transition">
+          Бастау 🚀
+        </button>
+
+        <button @click="logout()" class="text-gray-300 text-xs mt-8">выйти</button>
+      </div>
+    </template>
+
+    <!-- PLAYING -->
+    <template x-if="screen === 'playing'">
+      <div class="flex flex-col flex-1">
+        <div class="w-full bg-white rounded-full h-3 mb-6 shadow-inner overflow-hidden">
+          <div class="bg-violet-500 h-3 transition-all duration-300" :style="`width:${progressPct}%`"></div>
+        </div>
+
+        <div class="flex-1 flex flex-col items-center justify-center gap-6" :key="currentTask?.id">
+
+          <!-- translate -->
+          <template x-if="currentTask && (currentTask.type === 'translate_kk_ru' || currentTask.type === 'translate_ru_kk')">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-gray-400 text-sm">Переведи:</p>
+              <p class="text-3xl font-bold text-center text-violet-800" x-text="currentTask.content.prompt"></p>
+              <input x-model="textAnswer" @keyup.enter="submitTextAnswer()"
+                class="w-full border-2 border-violet-200 rounded-2xl px-4 py-3 text-xl text-center focus:border-violet-500 outline-none"
+                placeholder="твой ответ" :disabled="feedback !== null" autofocus />
+              <button @click="submitTextAnswer()" :disabled="!textAnswer || feedback !== null"
+                class="bg-violet-600 disabled:opacity-40 text-white font-bold rounded-full px-8 py-3 active:scale-95 transition">
+                Проверить
+              </button>
+            </div>
+          </template>
+
+          <!-- fill blank -->
+          <template x-if="currentTask && currentTask.type === 'fill_blank'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-gray-400 text-sm">Вставь пропущенные буквы:</p>
+              <p class="text-2xl font-bold text-center text-violet-800" x-text="currentTask.content.sentence"></p>
+              <input x-model="textAnswer" @keyup.enter="submitTextAnswer()"
+                class="w-full border-2 border-violet-200 rounded-2xl px-4 py-3 text-xl text-center focus:border-violet-500 outline-none"
+                placeholder="буквы" :disabled="feedback !== null" autofocus />
+              <button @click="submitTextAnswer()" :disabled="!textAnswer || feedback !== null"
+                class="bg-violet-600 disabled:opacity-40 text-white font-bold rounded-full px-8 py-3 active:scale-95 transition">
+                Проверить
+              </button>
+            </div>
+          </template>
+
+          <!-- multiple choice -->
+          <template x-if="currentTask && currentTask.type === 'multiple_choice'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-2xl font-bold text-center text-violet-800" x-text="currentTask.content.prompt"></p>
+              <div class="grid grid-cols-1 gap-3 w-full">
+                <template x-for="opt in currentTask.content.options" :key="opt">
+                  <button @click="submitTextAnswer(opt)" :disabled="feedback !== null"
+                    class="bg-white border-2 border-violet-200 rounded-2xl px-4 py-3 text-lg font-semibold text-violet-700 active:scale-95 transition disabled:opacity-40"
+                    x-text="opt"></button>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- flashcard -->
+          <template x-if="currentTask && currentTask.type === 'flashcard'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <div class="flip-card w-full h-48" :class="{flipped: cardFlipped}" @click="cardFlipped = true">
+                <div class="flip-inner relative w-full h-full">
+                  <div class="flip-face absolute inset-0 bg-white rounded-3xl shadow-md flex items-center justify-center text-3xl font-bold text-violet-800">
+                    <span x-text="currentTask.content.front"></span>
+                  </div>
+                  <div class="flip-face flip-back absolute inset-0 bg-violet-600 rounded-3xl shadow-md flex items-center justify-center text-3xl font-bold text-white">
+                    <span x-text="currentTask.content.answer"></span>
+                  </div>
+                </div>
+              </div>
+              <p x-show="!cardFlipped" class="text-gray-400 text-sm">нажми на карточку 👆</p>
+              <div x-show="cardFlipped" class="flex gap-4">
+                <button @click="submitAnswer('unknown')" :disabled="feedback !== null"
+                  class="bg-white border-2 border-gray-200 rounded-full px-6 py-3 font-semibold text-gray-500 active:scale-95 transition">
+                  Учу 📖
+                </button>
+                <button @click="submitAnswer('known')" :disabled="feedback !== null"
+                  class="bg-green-500 text-white rounded-full px-6 py-3 font-semibold active:scale-95 transition">
+                  Знаю ✅
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- anagram -->
+          <template x-if="currentTask && currentTask.type === 'anagram'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-gray-400 text-sm">Собери слово:</p>
+              <div class="flex flex-wrap justify-center items-center gap-2 min-h-[3.5rem] border-b-2 border-violet-200 pb-3 w-full">
+                <template x-for="i in anagramPicked" :key="i">
+                  <div class="w-10 h-10 rounded-lg bg-violet-600 text-white text-xl font-bold flex items-center justify-center">
+                    <span x-text="anagramTiles[i].letter"></span>
+                  </div>
+                </template>
+                <button x-show="anagramPicked.length" @click="anagramBackspace()" :disabled="feedback !== null"
+                  class="w-10 h-10 rounded-lg bg-gray-100 text-gray-400 text-xl flex items-center justify-center">⌫</button>
+              </div>
+              <div class="flex flex-wrap justify-center gap-2">
+                <template x-for="(tile, idx) in anagramTiles" :key="idx">
+                  <button x-show="!tile.used" @click="anagramPick(idx)" :disabled="feedback !== null"
+                    class="w-10 h-10 rounded-lg bg-white shadow text-xl font-bold text-violet-700 active:scale-90 transition disabled:opacity-40">
+                    <span x-text="tile.letter"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- sentence builder -->
+          <template x-if="currentTask && currentTask.type === 'sentence_builder'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-gray-400 text-sm">Собери предложение:</p>
+              <div class="flex flex-wrap justify-center items-center gap-2 min-h-[3.5rem] border-b-2 border-violet-200 pb-3 w-full">
+                <template x-for="i in sentencePicked" :key="i">
+                  <div class="rounded-lg bg-violet-600 text-white text-lg font-bold px-3 py-2">
+                    <span x-text="sentenceTiles[i].word"></span>
+                  </div>
+                </template>
+                <button x-show="sentencePicked.length" @click="sentenceBackspace()" :disabled="feedback !== null"
+                  class="w-10 h-10 rounded-lg bg-gray-100 text-gray-400 text-xl flex items-center justify-center">⌫</button>
+              </div>
+              <div class="flex flex-wrap justify-center gap-2">
+                <template x-for="(tile, idx) in sentenceTiles" :key="idx">
+                  <button x-show="!tile.used" @click="sentencePick(idx)" :disabled="feedback !== null"
+                    class="rounded-lg bg-white shadow text-lg font-bold text-violet-700 px-3 py-2 active:scale-90 transition disabled:opacity-40">
+                    <span x-text="tile.word"></span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- listening test -->
+          <template x-if="currentTask && currentTask.type === 'listening_test'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-gray-400 text-sm">Послушай и выбери перевод:</p>
+              <button @click="speakKazakh(currentTask.content.word_kazakh)"
+                class="w-20 h-20 rounded-full bg-violet-600 text-white text-4xl shadow-lg active:scale-90 transition flex items-center justify-center">
+                🔊
+              </button>
+              <div class="grid grid-cols-1 gap-3 w-full">
+                <template x-for="opt in currentTask.content.options" :key="opt">
+                  <button @click="submitTextAnswer(opt)" :disabled="feedback !== null"
+                    class="bg-white border-2 border-violet-200 rounded-2xl px-4 py-3 text-lg font-semibold text-violet-700 active:scale-95 transition disabled:opacity-40"
+                    x-text="opt"></button>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- fill in the blank (whole word, sentence-level) -->
+          <template x-if="currentTask && currentTask.type === 'fill_in_the_blank'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-gray-400 text-sm">Заполни пропуск:</p>
+              <p class="text-2xl font-bold text-center text-violet-800" x-text="currentTask.content.sentence"></p>
+              <div class="grid grid-cols-1 gap-3 w-full">
+                <template x-for="opt in currentTask.content.options" :key="opt">
+                  <button @click="submitTextAnswer(opt)" :disabled="feedback !== null"
+                    class="bg-white border-2 border-violet-200 rounded-2xl px-4 py-3 text-lg font-semibold text-violet-700 active:scale-95 transition disabled:opacity-40"
+                    x-text="opt"></button>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          <!-- true / false -->
+          <template x-if="currentTask && currentTask.type === 'true_false'">
+            <div class="w-full flex flex-col items-center gap-6">
+              <p class="text-gray-400 text-sm">Перевод верный?</p>
+              <div class="bg-white rounded-3xl shadow-md p-6 w-full text-center">
+                <p class="text-2xl font-bold text-violet-800" x-text="currentTask.content.kazakh"></p>
+                <p class="text-lg text-gray-300 my-1">=</p>
+                <p class="text-2xl font-bold text-violet-600" x-text="currentTask.content.shown_translation"></p>
+              </div>
+              <div class="flex gap-4">
+                <button @click="submitTextAnswer('false')" :disabled="feedback !== null"
+                  class="bg-rose-500 disabled:opacity-40 text-white rounded-full px-8 py-4 font-bold text-lg active:scale-95 transition">
+                  Неверно ❌
+                </button>
+                <button @click="submitTextAnswer('true')" :disabled="feedback !== null"
+                  class="bg-green-500 disabled:opacity-40 text-white rounded-full px-8 py-4 font-bold text-lg active:scale-95 transition">
+                  Верно ✅
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- matching -->
+          <template x-if="currentTask && currentTask.type === 'matching'">
+            <div class="w-full flex flex-col items-center gap-4">
+              <p class="text-gray-400 text-sm">Найди пару:</p>
+              <div class="grid grid-cols-2 gap-3 w-full">
+                <div class="flex flex-col gap-2">
+                  <template x-for="item in matchingLeft" :key="'l' + item.pairId">
+                    <button @click="matchingTapLeft(item)" :disabled="matchingMatched.includes(item.pairId)"
+                      class="rounded-xl px-3 py-3 text-sm font-semibold border-2 transition"
+                      :class="{
+                        'bg-green-100 border-green-400 text-green-700 opacity-60': matchingMatched.includes(item.pairId),
+                        'bg-rose-100 border-rose-400 text-rose-700': matchingWrong.includes(item.pairId),
+                        'bg-violet-100 border-violet-500 text-violet-700': matchingSelectedLeft === item.pairId && !matchingWrong.includes(item.pairId),
+                        'bg-white border-violet-200 text-violet-700': matchingSelectedLeft !== item.pairId && !matchingMatched.includes(item.pairId) && !matchingWrong.includes(item.pairId)
+                      }"
+                      x-text="item.text"></button>
+                  </template>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <template x-for="item in matchingRight" :key="'r' + item.pairId">
+                    <button @click="matchingTapRight(item)" :disabled="matchingMatched.includes(item.pairId)"
+                      class="rounded-xl px-3 py-3 text-sm font-semibold border-2 transition"
+                      :class="{
+                        'bg-green-100 border-green-400 text-green-700 opacity-60': matchingMatched.includes(item.pairId),
+                        'bg-rose-100 border-rose-400 text-rose-700': matchingWrong.includes(item.pairId),
+                        'bg-violet-100 border-violet-500 text-violet-700': matchingSelectedRight === item.pairId && !matchingWrong.includes(item.pairId),
+                        'bg-white border-violet-200 text-violet-700': matchingSelectedRight !== item.pairId && !matchingMatched.includes(item.pairId) && !matchingWrong.includes(item.pairId)
+                      }"
+                      x-text="item.text"></button>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+
+        </div>
+
+        <!-- feedback banner -->
+        <div x-show="feedback" x-transition
+          class="fixed bottom-0 left-0 right-0 p-6 text-center text-white font-bold text-xl pop"
+          :class="feedback === 'correct' ? 'bg-green-500' : 'bg-rose-500'">
+          <span x-text="feedback === 'correct' ? 'Дұрыс! 🎉' : ('Жаңылдың, дұрысы: ' + lastCorrectAnswer)"></span>
+        </div>
+      </div>
+    </template>
+
+    <!-- SUMMARY -->
+    <template x-if="screen === 'summary'">
+      <div class="flex flex-col items-center justify-center flex-1 gap-4 text-center">
+        <div class="text-6xl">🏆</div>
+        <h1 class="text-2xl font-bold text-violet-700">Керемет жұмыс!</h1>
+        <div class="bg-white rounded-3xl shadow-md p-6 w-full grid grid-cols-2 gap-4">
+          <div><div class="text-2xl font-bold" x-text="summary?.tasks_completed"></div><div class="text-xs text-gray-400">заданий</div></div>
+          <div><div class="text-2xl font-bold" x-text="summary?.accuracy_pct + '%'"></div><div class="text-xs text-gray-400">точность</div></div>
+          <div><div class="text-2xl font-bold">💎 +<span x-text="summary?.points_earned"></span></div><div class="text-xs text-gray-400">кристаллов</div></div>
+          <div><div class="text-2xl font-bold" x-text="Math.round((summary?.duration_seconds ?? 0)/60) + ' мин'"></div><div class="text-xs text-gray-400">время</div></div>
+        </div>
+        <template x-if="summary?.hardest_words?.length">
+          <p class="text-sm text-gray-500 bg-white rounded-2xl p-3 shadow w-full">
+            Стоит повторить: <span class="font-semibold" x-text="summary.hardest_words.join(', ')"></span>
+          </p>
+        </template>
+        <button @click="backToHome()" class="bg-violet-600 text-white font-bold rounded-full px-10 py-4 shadow-lg active:scale-95 transition mt-4">
+          Отлично!
+        </button>
+      </div>
+    </template>
+
+  </div>
+
+  <script>
+    function childApp() {
+      return {
+        screen: 'select',
+        children: [],
+        selected: null,
+        pin: '',
+        pinError: '',
+        home: null,
+        sessionId: null,
+        queue: [],
+        currentIndex: 0,
+        currentTask: null,
+        textAnswer: '',
+        cardFlipped: false,
+        feedback: null,
+        lastCorrectAnswer: '',
+        taskShownAt: null,
+        summary: null,
+
+        anagramTiles: [],
+        anagramPicked: [],
+        sentenceTiles: [],
+        sentencePicked: [],
+        matchingLeft: [],
+        matchingRight: [],
+        matchingMatched: [],
+        matchingSelectedLeft: null,
+        matchingSelectedRight: null,
+        matchingWrong: [],
+        _audio: null,
+
+        get progressPct() {
+          if (!this.queue.length) return 0;
+          return Math.round((this.currentIndex / this.queue.length) * 100);
+        },
+
+        async init() {
+          const res = await fetch('/api/auth/children');
+          this.children = await res.json();
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+          }
+        },
+
+        selectChild(c) {
+          this.selected = c;
+          this.pin = '';
+          this.pinError = '';
+          this.screen = 'pin';
+        },
+
+        pressDigit(d) {
+          if (this.pin.length >= 4) return;
+          this.pin += String(d);
+          if (this.pin.length === 4) this.submitPin();
+        },
+        backspace() {
+          this.pin = this.pin.slice(0, -1);
+        },
+
+        async submitPin() {
+          const res = await fetch('/api/auth/pin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ child_id: this.selected.id, pin: this.pin }),
+          });
+          if (!res.ok) {
+            this.pinError = 'Неверный код, попробуй ещё раз';
+            this.pin = '';
+            return;
+          }
+          await this.loadHome();
+          this.screen = 'home';
+        },
+
+        async loadHome() {
+          const res = await fetch('/api/practice/home');
+          this.home = await res.json();
+        },
+
+        logout() {
+          document.cookie = 'child_session=; Max-Age=0; path=/';
+          this.screen = 'select';
+        },
+
+        async startSession() {
+          const res = await fetch('/api/practice/session/start', { method: 'POST' });
+          if (!res.ok) { await this.loadHome(); return; }
+          const data = await res.json();
+          this.sessionId = data.session_id;
+
+          const qRes = await fetch('/api/practice/queue');
+          this.queue = await qRes.json();
+          this.currentIndex = 0;
+          if (!this.queue.length) { await this.loadHome(); this.screen = 'home'; return; }
+          this.screen = 'playing';
+          this.showTask();
+        },
+
+        showTask() {
+          this.currentTask = this.queue[this.currentIndex];
+          this.textAnswer = '';
+          this.cardFlipped = false;
+          this.feedback = null;
+          this.taskShownAt = Date.now();
+
+          const type = this.currentTask.type;
+          const content = this.currentTask.content;
+
+          this.anagramTiles = type === 'anagram' ? content.letters.map(l => ({ letter: l, used: false })) : [];
+          this.anagramPicked = [];
+
+          this.sentenceTiles = type === 'sentence_builder' ? content.words.map(w => ({ word: w, used: false })) : [];
+          this.sentencePicked = [];
+
+          if (type === 'matching') {
+            const pairs = content.pairs.map((p, i) => ({ ...p, pairId: i }));
+            this.matchingLeft = this.shuffleArray(pairs.map(p => ({ pairId: p.pairId, text: p.kazakh })));
+            this.matchingRight = this.shuffleArray(pairs.map(p => ({ pairId: p.pairId, text: p.russian })));
+          } else {
+            this.matchingLeft = [];
+            this.matchingRight = [];
+          }
+          this.matchingMatched = [];
+          this.matchingSelectedLeft = null;
+          this.matchingSelectedRight = null;
+          this.matchingWrong = [];
+
+          if (type === 'listening_test') {
+            this.speakKazakh(content.word_kazakh);
+          }
+        },
+
+        shuffleArray(arr) {
+          const a = [...arr];
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        },
+
+        speakKazakh(text) {
+          if (!text) return;
+          if (this._audio) {
+            this._audio.pause();
+          }
+          this._audio = new Audio(`/api/practice/audio?text=${encodeURIComponent(text)}`);
+          this._audio.play().catch(() => {});
+        },
+
+        get anagramWord() {
+          return this.anagramPicked.map(i => this.anagramTiles[i].letter).join('');
+        },
+        anagramPick(idx) {
+          if (this.feedback !== null || this.anagramTiles[idx].used) return;
+          this.anagramTiles[idx].used = true;
+          this.anagramPicked.push(idx);
+          if (this.anagramPicked.length === this.anagramTiles.length) {
+            this.submitAnswer(this.anagramWord);
+          }
+        },
+        anagramBackspace() {
+          if (!this.anagramPicked.length) return;
+          const idx = this.anagramPicked.pop();
+          this.anagramTiles[idx].used = false;
+        },
+
+        get sentenceSentence() {
+          return this.sentencePicked.map(i => this.sentenceTiles[i].word).join(' ');
+        },
+        sentencePick(idx) {
+          if (this.feedback !== null || this.sentenceTiles[idx].used) return;
+          this.sentenceTiles[idx].used = true;
+          this.sentencePicked.push(idx);
+          if (this.sentencePicked.length === this.sentenceTiles.length) {
+            this.submitAnswer(this.sentenceSentence);
+          }
+        },
+        sentenceBackspace() {
+          if (!this.sentencePicked.length) return;
+          const idx = this.sentencePicked.pop();
+          this.sentenceTiles[idx].used = false;
+        },
+
+        matchingTapLeft(item) {
+          if (this.feedback !== null || this.matchingMatched.includes(item.pairId)) return;
+          this.matchingSelectedLeft = item.pairId;
+          this.matchingCheckMatch();
+        },
+        matchingTapRight(item) {
+          if (this.feedback !== null || this.matchingMatched.includes(item.pairId)) return;
+          this.matchingSelectedRight = item.pairId;
+          this.matchingCheckMatch();
+        },
+        matchingCheckMatch() {
+          if (this.matchingSelectedLeft === null || this.matchingSelectedRight === null) return;
+          if (this.matchingSelectedLeft === this.matchingSelectedRight) {
+            this.matchingMatched.push(this.matchingSelectedLeft);
+            this.matchingSelectedLeft = null;
+            this.matchingSelectedRight = null;
+            if (this.matchingMatched.length === this.matchingLeft.length) {
+              this.submitAnswer('matched');
+            }
+          } else {
+            this.matchingWrong = [this.matchingSelectedLeft, this.matchingSelectedRight];
+            setTimeout(() => {
+              this.matchingWrong = [];
+              this.matchingSelectedLeft = null;
+              this.matchingSelectedRight = null;
+            }, 500);
+          }
+        },
+
+        submitTextAnswer(value) {
+          this.submitAnswer(value ?? this.textAnswer);
+        },
+
+        async submitAnswer(answer) {
+          if (this.feedback !== null) return;
+          const responseTime = Date.now() - this.taskShownAt;
+          const res = await fetch('/api/practice/attempt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: this.sessionId,
+              task_id: this.currentTask.id,
+              answer: answer,
+              response_time_ms: responseTime,
+            }),
+          });
+          const result = await res.json();
+          this.feedback = result.is_correct ? 'correct' : 'wrong';
+          this.lastCorrectAnswer = result.correct_answer;
+
+          setTimeout(() => this.nextTask(), 1200);
+        },
+
+        async nextTask() {
+          this.currentIndex++;
+          if (this.currentIndex >= this.queue.length) {
+            await this.finishSession();
+            return;
+          }
+          this.showTask();
+        },
+
+        async finishSession() {
+          const res = await fetch(`/api/practice/session/${this.sessionId}/end`, { method: 'POST' });
+          this.summary = await res.json();
+          this.screen = 'summary';
+        },
+
+        async backToHome() {
+          await this.loadHome();
+          this.screen = 'home';
+        },
+      };
+    }
+  </script>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
